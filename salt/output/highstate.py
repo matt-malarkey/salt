@@ -130,17 +130,10 @@ def output(data):
     if 'data' in data:
         data = data.pop('data')
 
-    for host, hostdata in six.iteritems(data):
-        if not isinstance(hostdata, dict):
-            # Highstate return data must be a dict, if this is not the case
-            # then this value is likely a retcode.
-            continue
-        return _format_host(host, hostdata)[0]
-    log.error(
-        'Data passed to highstate outputter is not a valid highstate return: %s',
-        data
+    return "\n".join(
+        _format_host(host, hostdata)[0]
+        for host, hostdata in six.iteritems(data)
     )
-
 
 def _format_host(host, data):
     host = sdecode(host)
