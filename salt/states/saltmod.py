@@ -214,7 +214,8 @@ def state(
     if pillar:
         cmd_kw['kwarg']['pillar'] = pillar
 
-    cmd_kw['kwarg']['saltenv'] = __env__
+    if __env__ != 'base':
+        cmd_kw['kwarg']['saltenv'] = __env__
     cmd_kw['kwarg']['queue'] = queue
 
     if isinstance(concurrent, bool):
