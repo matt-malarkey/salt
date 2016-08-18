@@ -877,6 +877,9 @@ class LocalClient(object):
         minion_timeouts = {}
 
         found = set()
+        findjob_returned = set()
+        findjob_ever_returned = set()
+        retry = 0
         # Check to see if the jid is real, if not return the empty dict
         try:
             if self.returners['{0}.get_load'.format(self.opts['master_job_cache'])](jid) == {}:
@@ -946,33 +949,60 @@ class LocalClient(object):
                     # Therefore, continue to wait up to the syndic_wait period (calculated in gather_syndic_wait) to see
                     # if additional lower-level masters deliver their lists of expected
                     # minions.
+                    log.info('all minions returned for jid {0}'.format(jid))
                     break
             # If we get here we may not have gathered the minion list yet. Keep waiting
             # for all lower-level masters to respond with their minion lists
 
             # let start the timeouts for all remaining minions
+            now = time.time()
 
             for id_ in minions - found:
                 # if we have a new minion in the list, make sure it has a timeout
                 if id_ not in minion_timeouts:
-                    minion_timeouts[id_] = time.time() + timeout
+                    minion_timeouts[id_] = now + timeout
 
             # if the jinfo has timed out and some minions are still running the job
             # re-do the ping
-            if time.time() > timeout_at and minions_running:
-                # since this is a new ping, no one has responded yet
-                jinfo = self.gather_job_info(jid, tgt, tgt_type, **kwargs)
-                minions_running = False
-                # if we weren't assigned any jid that means the master thinks
-                # we have nothing to send
-                if 'jid' not in jinfo:
-                    jinfo_iter = []
+            if now > timeout_at:
+                # continue to wait if not all find_job returned for minions that have ever returned
+                # until timeout (4 * gather_job_timeout)
+                if retry > 0 and len(findjob_returned) < len(findjob_ever_returned):
+                    log.debug('Find_job timeout reached, but not all minions returned, still waiting for -> %s'
+                              %(findjob_ever_returned - findjob_returned))
+                    log.debug('Retry %s times' %retry)
+                    timeout_at = now + self.opts['gather_job_timeout']
+                    retry -= 1
+                # if all find_job returned (or timeout) and minions_runnning, start a new find_job
+                elif minions_running:
+                    # since this is a new ping, no one has responded yet
+                    jinfo = self.gather_job_info(jid, tgt, tgt_type, **kwargs)
+                    findjob_returned = set()
+                    retry = 4
+                    minions_running = False
+                    # if we weren't assigned any jid that means the master thinks
+                    # we have nothing to send
+                    if 'jid' not in jinfo:
+                        jinfo_iter = []
+                    else:
+                        jinfo_iter = self.get_returns_no_block('salt/job/{0}'.format(jinfo['jid']))
+                    timeout_at = now + self.opts['gather_job_timeout']
+                    # if you are a syndic, wait a little longer
+                    if self.opts['order_masters']:
+                        timeout_at += self.opts.get('syndic_wait', 1)
+                # if all find_job returned (or timeout) and no minion running
                 else:
-                    jinfo_iter = self.get_returns_no_block('salt/job/{0}'.format(jinfo['jid']))
-                timeout_at = time.time() + self.opts['gather_job_timeout']
-                # if you are a syndic, wait a little longer
-                if self.opts['order_masters']:
-                    timeout_at += self.opts.get('syndic_wait', 1)
+                    done = True
+                    # if all minions have timeod out
+                    for id_ in minions - found:
+                        if now < minion_timeouts[id_]:
+                            done = False
+                            break
+                    if done:
+                        if len(found.intersection(minions)) < len(minions):
+                            log.info('jid {0} minions {1} did not return in time'.format(jid, (minions - found)))
+                        break
+
 
             # check for minions that are running the job still
             for raw in jinfo_iter:
@@ -992,6 +1022,9 @@ class LocalClient(object):
                     continue
                 if 'return' not in raw.get('data', {}):
                     continue
+                else:
+                    findjob_returned.add(raw['data']['id'])
+                    findjob_ever_returned.add(raw['data']['id'])
 
                 # if the job isn't running there anymore... don't count
                 if raw['data']['return'] == {}:
@@ -1001,24 +1034,10 @@ class LocalClient(object):
                 if raw['data']['id'] not in minions:
                     minions.add(raw['data']['id'])
                 # update this minion's timeout, as long as the job is still running
-                minion_timeouts[raw['data']['id']] = time.time() + timeout
+                minion_timeouts[raw['data']['id']] = now + timeout
                 # a minion returned, so we know its running somewhere
                 minions_running = True
 
-            # if we have hit gather_job_timeout (after firing the job) AND
-            # if we have hit all minion timeouts, lets call it
-            now = time.time()
-            # if we have finished waiting, and no minions are running the job
-            # then we need to see if each minion has timedout
-            done = (now > timeout_at) and not minions_running
-            if done:
-                # if all minions have timeod out
-                for id_ in minions - found:
-                    if now < minion_timeouts[id_]:
-                        done = False
-                        break
-            if done:
-                break
 
             # don't spin
             if block:
