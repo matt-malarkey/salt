@@ -2391,6 +2391,7 @@ class API(object):
 
                 'tools.trailing_slash.on': True,
                 'tools.gzip.on': True,
+                'tools.gzip.mime_types': ['text/html', 'text/plain', 'application/json'],
 
                 'tools.cpstats.on': self.apiopts.get('collect_stats', False),
 
