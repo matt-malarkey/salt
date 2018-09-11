@@ -103,10 +103,9 @@ def store_job(opts, load, event=None, mminion=None):
         log.error(emsg)
         raise KeyError(emsg)
 
-    try:
+    if 'jid' in load \
+            and getfstr in mminion.returners:
         mminion.returners[savefstr](load['jid'], load)
-    except KeyError as e:
-        log.error("Load does not contain 'jid': %s", e)
     mminion.returners[fstr](load)
 
     if (opts.get('job_cache_store_endtime')
