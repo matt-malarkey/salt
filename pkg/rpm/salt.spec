@@ -12,11 +12,11 @@
 %{!?pythonpath: %global pythonpath %(%{__python} -c "import os, sys; print(os.pathsep.join(x for x in sys.path if x))")}
 
 %define _salttesting SaltTesting
-%define _salttesting_ver 2015.2.16
+%define _salttesting_ver 2018.1.16
 
 Name: salt
-Version: 2014.7.2
-Release: 2%{?dist}
+Version: 2018.3.2
+Release: 2.sl1%{?dist}
 Summary: A parallel remote execution system
 
 Group:   System Environment/Daemons
@@ -34,7 +34,10 @@ Source8: %{name}-minion.service
 Source9: %{name}-api.service
 Source10: README.fedora
 Source11: logrotate.salt
-Patch0:  skip_tests_%{version}.patch
+Source12: salt.bash
+
+# Patch0:  2015.5.9-dnf.patch
+
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildArch: noarch
@@ -44,7 +47,13 @@ Requires: dmidecode
 %endif
 
 Requires: pciutils
+Requires: which
+
+%if 0%{?fedora} > 21
+Requires: dnf-plugins-core
+%else
 Requires: yum-utils
+%endif
 
 %if 0%{?with_python26}
 
@@ -147,7 +156,7 @@ from the master, runs jobs, and returns results back to the master.
 %package syndic
 Summary: Master-of-master component for Salt, a parallel remote execution system
 Group:   System Environment/Daemons
-Requires: %{name} = %{version}-%{release}
+Requires: %{name}-master = %{version}-%{release}
 
 %description syndic
 The Salt syndic is a master daemon which can receive instruction from a
@@ -158,6 +167,7 @@ infrastructure.
 Summary: REST API for Salt, a parallel remote execution system
 Group:   System administration tools
 Requires: %{name}-master = %{version}-%{release}
+Requires: python-cherrypy
 
 %description api
 salt-api provides a REST interface to the Salt master.
@@ -166,6 +176,7 @@ salt-api provides a REST interface to the Salt master.
 Summary: Cloud provisioner for Salt, a parallel remote execution system
 Group:   System administration tools
 Requires: %{name}-master = %{version}-%{release}
+Requires: python-libcloud
 
 %description cloud
 The salt-cloud tool provisions new cloud VMs, installs salt-minion on them, and
@@ -185,7 +196,7 @@ of an agent (salt-minion) service.
 %setup -T -D -a 1
 
 cd %{name}-%{version}
-%patch0 -p1
+# %patch0 -p1
 
 %build
 
@@ -224,9 +235,21 @@ install -p -m 0644 %{SOURCE8} %{buildroot}%{_unitdir}/
 install -p -m 0644 %{SOURCE9} %{buildroot}%{_unitdir}/
 %endif
 
+# Force python2.6 on EPEL6
+# https://github.com/saltstack/salt/issues/22003
+%if 0%{?rhel} == 6
+sed -i 's#/usr/bin/python#/usr/bin/python2.6#g' %{buildroot}%{_bindir}/salt*
+sed -i 's#/usr/bin/python#/usr/bin/python2.6#g' %{buildroot}%{_initrddir}/salt*
+%endif
+
+# Logrotate
 install -p %{SOURCE10} .
 mkdir -p %{buildroot}%{_sysconfdir}/logrotate.d/
 install -p -m 0644 %{SOURCE11} %{buildroot}%{_sysconfdir}/logrotate.d/salt
+
+# Bash completion
+mkdir -p %{buildroot}%{_sysconfdir}/bash_completion.d/
+install -p -m 0644 %{SOURCE12} %{buildroot}%{_sysconfdir}/bash_completion.d/salt.bash
 
 %if ((0%{?rhel} >= 6 || 0%{?fedora} > 12) && 0%{?include_tests})
 %check
@@ -242,30 +265,35 @@ rm -rf %{buildroot}
 %defattr(-,root,root,-)
 %doc $RPM_BUILD_DIR/%{name}-%{version}/%{name}-%{version}/LICENSE
 %{python_sitelib}/%{name}/*
-#%{python_sitelib}/%{name}-%{version}-py?.?.egg-info
 %{python_sitelib}/%{name}-*-py?.?.egg-info
 %{_sysconfdir}/logrotate.d/salt
+%{_sysconfdir}/bash_completion.d/salt.bash
 %{_var}/cache/salt
 %doc $RPM_BUILD_DIR/%{name}-%{version}/%{name}-%{version}/README.fedora
 
 %files master
 %defattr(-,root,root)
 %doc %{_mandir}/man7/salt.7.*
+%doc %{_mandir}/man1/salt.1.*
 %doc %{_mandir}/man1/salt-cp.1.*
 %doc %{_mandir}/man1/salt-key.1.*
 %doc %{_mandir}/man1/salt-master.1.*
 %doc %{_mandir}/man1/salt-run.1.*
 %doc %{_mandir}/man1/salt-unity.1.*
+%doc %{_mandir}/man1/salt-proxy.1.*
+%doc %{_mandir}/man1/spm.1.*
 %{_bindir}/salt
 %{_bindir}/salt-cp
 %{_bindir}/salt-key
 %{_bindir}/salt-master
 %{_bindir}/salt-run
 %{_bindir}/salt-unity
+%{_bindir}/salt-proxy
+%{_bindir}/spm
 %if ! (0%{?rhel} >= 7 || 0%{?fedora} >= 15)
 %attr(0755, root, root) %{_initrddir}/salt-master
 %else
-%config(noreplace) %{_unitdir}/salt-master.service
+%{_unitdir}/salt-master.service
 %endif
 %config(noreplace) %{_sysconfdir}/salt/master
 
@@ -278,7 +306,7 @@ rm -rf %{buildroot}
 %if ! (0%{?rhel} >= 7 || 0%{?fedora} >= 15)
 %attr(0755, root, root) %{_initrddir}/salt-minion
 %else
-%config(noreplace) %{_unitdir}/salt-minion.service
+%{_unitdir}/salt-minion.service
 %endif
 %config(noreplace) %{_sysconfdir}/salt/minion
 
@@ -288,7 +316,7 @@ rm -rf %{buildroot}
 %if ! (0%{?rhel} >= 7 || 0%{?fedora} >= 15)
 %attr(0755, root, root) %{_initrddir}/salt-syndic
 %else
-%config(noreplace) %{_unitdir}/salt-syndic.service
+%{_unitdir}/salt-syndic.service
 %endif
 
 %files api
@@ -298,7 +326,7 @@ rm -rf %{buildroot}
 %if ! (0%{?rhel} >= 7 || 0%{?fedora} >= 15)
 %attr(0755, root, root) %{_initrddir}/salt-api
 %else
-%config(noreplace) %{_unitdir}/salt-api.service
+%{_unitdir}/salt-api.service
 %endif
 
 %files cloud
@@ -314,7 +342,7 @@ rm -rf %{buildroot}
 %files ssh
 %doc %{_mandir}/man1/salt-ssh.1.*
 %{_bindir}/salt-ssh
-%{_sysconfdir}/salt/roster
+%config(noreplace) %{_sysconfdir}/salt/roster
 
 
 # less than RHEL 8 / Fedora 16
@@ -436,11 +464,71 @@ rm -rf %{buildroot}
 %endif
 
 %changelog
-* Fri Mar 27 2015 Stephen Spencer <stephen@revsys.com> - 2014.7.2-2
-- avoid replacing the salt*.service files. Systemd ignores /etc/security/limits*
-  in favor of directives entered in the service files.
+* Tue May 31 2016 Erik Johnson <erik@saltstack.com> - 2015.5.10-2
+- Updated patch
 
-  See systemd.directives(7), systemd.exec(5), systemd-system.conf(5)
+* Fri May 27 2016 Erik Johnson <erik@saltstack.com> - 2015.5.10-1
+- Update to bugfix release 2015.5.10
+
+* Tue Mar  1 2016 Erik Johnson <erik@saltstack.com> - 2015.5.9-5
+- Updated dnf patch
+
+* Sun Feb 21 2016 Erik Johnson <erik@saltstack.com> - 2015.5.9-4
+- Updated dnf patch
+
+* Thu Feb  4 2016 Erik Johnson <erik@saltstack.com> - 2015.5.9-3
+- Corrected Requires for salt-syndic package
+
+* Sun Jan 24 2016 Erik Johnson <erik@saltstack.com> - 2015.5.9-2
+- Updated dnf patch
+
+* Thu Jan 21 2016 Erik Johnson <erik@saltstack.com> - 2015.5.9-1
+- Update to bugfix release 2015.5.9, patched with proper dnf support
+
+* Sun Dec 20 2015 Erik Johnson <erik@saltstack.com> - 2015.5.8-1
+- Update to bugfix release 2015.5.8
+
+* Fri Aug 21 2015 Erik Johnson <erik@saltstack.com> - 2015.5.5-1
+- Update to bugfix release 2015.5.5
+
+* Fri Jul 10 2015 Erik Johnson <erik@saltstack.com> - 2015.5.3-4
+- Patch tests
+
+* Fri Jul 10 2015 Erik Johnson <erik@saltstack.com> - 2015.5.3-3
+- Patch init grain
+
+* Fri Jul 10 2015 Erik Johnson <erik@saltstack.com> - 2015.5.3-2
+- Update to bugfix release 2015.5.3, add bash completion
+
+* Fri Jun 19 2015 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2015.5.2-4
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_23_Mass_Rebuild
+
+* Thu Jun  4 2015 Erik Johnson <erik@saltstack.com> - 2015.5.2-3
+- Mark salt-ssh roster as a config file to prevent replacement
+
+* Thu Jun  4 2015 Erik Johnson <erik@saltstack.com> - 2015.5.2-2
+- Update skipped tests
+
+* Thu Jun  4 2015 Erik Johnson <erik@saltstack.com> - 2015.5.2-1
+- Update to bugfix release 2015.5.2
+
+* Mon Jun  1 2015 Erik Johnson <erik@saltstack.com> - 2015.5.1-2
+- Add missing dependency on which (RH #1226636)
+
+* Wed May 27 2015 Erik Johnson <erik@saltstack.com> - 2015.5.1-1
+- Update to bugfix release 2015.5.1
+
+* Mon May 11 2015 Erik Johnson <erik@saltstack.com> - 2015.5.0-1
+- Update to feature release 2015.5.0
+
+* Fri Apr 17 2015 Erik Johnson <erik@saltstack.com> - 2014.7.5-1
+- Update to bugfix release 2014.7.5
+
+* Tue Apr  7 2015 Erik Johnson <erik@saltstack.com> - 2014.7.4-4
+- Fix RH bug #1210316 and Salt bug #22003
+
+* Tue Apr  7 2015 Erik Johnson <erik@saltstack.com> - 2014.7.4-2
+- Update to bugfix release 2014.7.4
 
 * Tue Feb 17 2015 Erik Johnson <erik@saltstack.com> - 2014.7.2-1
 - Update to bugfix release 2014.7.2
@@ -450,9 +538,6 @@ rm -rf %{buildroot}
 
 * Fri Nov  7 2014 Erik Johnson <erik@saltstack.com> - 2014.7.0-3
 - Make salt-api its own package
-
-* Thu Nov  6 2014 Erik Johnson <erik@saltstack.com> - 2014.7.0-2
-- Fix changelog
 
 * Thu Nov  6 2014 Erik Johnson <erik@saltstack.com> - 2014.7.0-1
 - Update to feature release 2014.7.0
@@ -481,8 +566,17 @@ rm -rf %{buildroot}
 * Wed Jun 11 2014 Erik Johnson <erik@saltstack.com> - 2014.1.5-1
 - Update to bugfix release 2014.1.5
 
+* Sun Jun 08 2014 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2014.1.4-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_21_Mass_Rebuild
+
 * Tue May  6 2014 Erik Johnson <erik@saltstack.com> - 2014.1.4-1
 - Update to bugfix release 2014.1.4
+
+* Fri Apr 18 2014 Erik Johnson <erik@saltstack.com> - 2014.1.3-1
+- Update to bugfix release 2014.1.3
+
+* Fri Mar 21 2014 Erik Johnson <erik@saltstack.com> - 2014.1.1-1
+- Update to bugfix release 2014.1.1
 
 * Thu Feb 20 2014 Erik Johnson <erik@saltstack.com> - 2014.1.0-1
 - Update to feature release 2014.1.0
