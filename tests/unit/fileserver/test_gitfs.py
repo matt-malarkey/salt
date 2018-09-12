@@ -63,8 +63,6 @@ log = logging.getLogger(__name__)
 TMP_SOCK_DIR = tempfile.mkdtemp(dir=TMP)
 TMP_REPO_DIR = os.path.join(TMP, 'gitfs_root')
 INTEGRATION_BASE_FILES = os.path.join(FILES, 'file', 'base')
-UNICODE_FILENAME = 'питон.txt'
-UNICODE_DIRNAME = UNICODE_ENVNAME = 'соль'
 TAG_NAME = 'mytag'
 
 OPTS = {
@@ -249,22 +247,18 @@ class GitFSTestFuncs(object):
         gitfs.update()
         ret = gitfs.file_list(LOAD)
         self.assertIn('testfile', ret)
-        self.assertIn(UNICODE_FILENAME, ret)
         # This function does not use os.sep, the Salt fileserver uses the
         # forward slash, hence it being explicitly used to join here.
-        self.assertIn('/'.join((UNICODE_DIRNAME, 'foo.txt')), ret)
 
     def test_dir_list(self):
         gitfs.update()
         ret = gitfs.dir_list(LOAD)
         self.assertIn('grail', ret)
-        self.assertIn(UNICODE_DIRNAME, ret)
 
     def test_envs(self):
         gitfs.update()
         ret = gitfs.envs(ignore_cache=True)
         self.assertIn('base', ret)
-        self.assertIn(UNICODE_ENVNAME, ret)
         self.assertIn(TAG_NAME, ret)
 
     def test_ref_types_global(self):
@@ -277,7 +271,6 @@ class GitFSTestFuncs(object):
             # Since we are restricting to branches only, the tag should not
             # appear in the envs list.
             self.assertIn('base', ret)
-            self.assertIn(UNICODE_ENVNAME, ret)
             self.assertNotIn(TAG_NAME, ret)
 
     def test_ref_types_per_remote(self):
@@ -292,7 +285,6 @@ class GitFSTestFuncs(object):
             # Since we are restricting to tags only, the tag should appear in
             # the envs list, but the branches should not.
             self.assertNotIn('base', ret)
-            self.assertNotIn(UNICODE_ENVNAME, ret)
             self.assertIn(TAG_NAME, ret)
 
     def test_disable_saltenv_mapping_global_with_mapping_defined_globally(self):
@@ -416,9 +408,6 @@ class GitFSTestBase(object):
             repo.index.add([x for x in os.listdir(TMP_REPO_DIR)
                             if x != '.git'])
             repo.index.commit('Test')
-
-            # Add another branch with unicode characters in the name
-            repo.create_head(UNICODE_ENVNAME, 'HEAD')
 
             # Add a tag
             repo.create_tag(TAG_NAME, 'HEAD')

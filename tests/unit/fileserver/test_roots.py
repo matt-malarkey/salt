@@ -27,9 +27,6 @@ try:
 except ImportError:
     pass
 
-UNICODE_FILENAME = 'питон.txt'
-UNICODE_DIRNAME = UNICODE_ENVNAME = 'соль'
-
 
 @skipIf(NO_MOCK, NO_MOCK_REASON)
 class RootsTest(TestCase, AdaptedConfigurationTestCaseMixin, LoaderModuleMockMixin):
@@ -89,7 +86,6 @@ class RootsTest(TestCase, AdaptedConfigurationTestCaseMixin, LoaderModuleMockMix
     def test_file_list(self):
         ret = roots.file_list({'saltenv': 'base'})
         self.assertIn('testfile', ret)
-        self.assertIn(UNICODE_FILENAME, ret)
 
     def test_find_file(self):
         ret = roots.find_file('testfile')
@@ -144,11 +140,9 @@ class RootsTest(TestCase, AdaptedConfigurationTestCaseMixin, LoaderModuleMockMix
 
     def test_envs(self):
         opts = {'file_roots': copy.copy(self.opts['file_roots'])}
-        opts['file_roots'][UNICODE_ENVNAME] = opts['file_roots']['base']
         with patch.dict(roots.__opts__, opts):
             ret = roots.envs()
         self.assertIn('base', ret)
-        self.assertIn(UNICODE_ENVNAME, ret)
 
     def test_file_hash(self):
         load = {
@@ -182,7 +176,6 @@ class RootsTest(TestCase, AdaptedConfigurationTestCaseMixin, LoaderModuleMockMix
     def test_dir_list(self):
         ret = roots.dir_list({'saltenv': 'base'})
         self.assertIn('empty_dir', ret)
-        self.assertIn(UNICODE_DIRNAME, ret)
 
     def test_symlink_list(self):
         if self.test_symlink_list_file_roots:

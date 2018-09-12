@@ -1136,22 +1136,6 @@ class FileTest(ModuleCase, SaltReturnAssertsMixin):
         actual_dir_mode = oct(stat.S_IMODE(os.stat(name).st_mode))[-4:]
         self.assertEqual(dir_mode, actual_dir_mode)
 
-    @with_tempdir(create=False)
-    def test_recurse_issue_40578(self, name):
-        '''
-        This ensures that the state doesn't raise an exception when it
-        encounters a file with a unicode filename in the process of invoking
-        file.source_list.
-        '''
-        ret = self.run_state('file.recurse',
-                             name=name,
-                             source='salt://соль')
-        self.assertSaltTrueReturn(ret)
-        self.assertEqual(
-            sorted(salt.utils.data.decode(os.listdir(name), normalize=True)),
-            sorted(['foo.txt', 'спам.txt', 'яйца.txt']),
-        )
-
     @with_tempfile()
     def test_replace(self, name):
         '''
