@@ -72,6 +72,19 @@ else:
                 __salt__=SALT_STUB)
 @patch('salt.utils.which', Mock(return_value='/usr/bin/pgsql'))
 class PostgresTestCase(TestCase):
+
+    # Make sure psycopg2 is not available
+    def setUp(self):
+        self._has_psycopg = postgres.HAS_PSYCOPG
+        postgres.HAS_PSYCOPG = False
+
+    # Make psycopg2 available again if present
+    def tearDown(self):
+        postgres.HAS_PSYCOPG = self._has_psycopg
+
+    def test_psycopg_not_found(self):
+        self.assertFalse(postgres.HAS_PSYCOPG)
+
     def test_run_psql(self):
         postgres._run_psql('echo "hi"')
         cmd = SALT_STUB['cmd.run_all']

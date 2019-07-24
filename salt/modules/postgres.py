@@ -46,6 +46,11 @@ try:
     HAS_CSV = True
 except ImportError:
     HAS_CSV = False
+try:
+    import psycopg2
+    HAS_PSYCOPG = True
+except ImportError:
+    HAS_PSYCOPG = False
 
 # Import salt libs
 import salt.utils
@@ -254,8 +259,13 @@ def version(user=None, host=None, port=None, maintenance_db=None,
 
         salt '*' postgres.version
     '''
+
     query = 'SELECT setting FROM pg_catalog.pg_settings ' \
             'WHERE name = \'server_version\''
+
+    if HAS_PSYCOPG:
+        return _psycopg_run_command(query, db_name=maintenance_db, host=host, port=port, user=user, password=password)
+
     cmd = _psql_cmd('-c', query,
                     '-t',
                     host=host,
@@ -3114,3 +3124,92 @@ def datadir_exists(name):
     _config_file = os.path.join(name, 'postgresql.conf')
 
     return os.path.isfile(_version_file) and os.path.isfile(_config_file)
+
+
+def _psycopg_get_connection(db_name=None, host=None, port=None, user=None, password=None):
+    """
+    Get back a psycopg2 connection to the db specified.
+
+    Store in the __context__ dictionary to persist across usage of
+     this module to look up on future calls, if it was not there already.
+    """
+
+    (user, host, port, db_name, password) = _connection_defaults(db_name, host, port, user, password)
+
+    # Create connection and store in context if not already there
+    db_conn_key = _psycopg_get_db_conn_key(db_name=db_name, host=host, port=port, user=user)
+
+    # Check if run inside a state i.e. is context defined, can we persist connection
+    try:
+        if db_conn_key not in __context__:
+            conn = psycopg2.connect(dbname=db_name, user=user, password=password, host=host, port=port)
+            __context__[db_conn_key] = conn
+        return __context__[db_conn_key]
+    except NameError:
+        return psycopg2.connect(dbname=db_name, user=user, password=password, host=host, port=port)
+
+
+def _psycopg_get_db_conn_key(db_name, host, port, user):
+    return "db=" + str(db_name) + ",user=" + str(user) + ",host=" + str(host) + ",port=" + str(port)
+
+
+def _psycopg_run_command(cmd, db_name=None, host=None, port=None, user=None, password=None):
+    """
+    Run a command on a postgres database using psycopg2.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' postgres_ext.run_command 'create table foo()'
+
+    cmd
+        The single sql statement to run
+
+    db_name
+        The database that we run the script against
+
+    Other args are the same as the configuration
+    """
+
+    conn = _psycopg_get_connection(db_name=db_name, host=host, port=port, user=user, password=password)
+    conn.set_session(autocommit=True)
+    cur = conn.cursor()
+
+    try:
+        cur.execute(cmd)
+        success = 0
+    except psycopg2.Error as e:
+        log.error(str(e))
+        success = -1
+
+    # See if there were any results in case of query
+    res = cur.statusmessage
+    if "SELECT" in res:
+        res = _psycopg_format_as_psql_output(cur.fetchall())
+
+    return {'retcode': success, 'stdout': res}
+
+
+def _psycopg_format_as_psql_output(rows):
+    """
+    Format the output from a psycopg2 fetch (a list of rows) as if it were returned from the psql command line.
+    """
+
+    # TODO(mdm): don't just hack this together
+    output = ''
+    if len(rows) > 0:
+        if rows[0] == (True,) or rows[0] == (False,):
+            output = "exists\nt\n"
+        else:
+            output = 'val\n'
+            for row in rows:
+                output += row[0]
+                output += "\n"
+
+    # Append the number of rows fetched
+    num_rows = len(rows)
+    row_or_rows = ' row' if num_rows == 1 else ' rows'
+    footer = "(" + str(num_rows) + row_or_rows + ")"
+
+    return output + footer
