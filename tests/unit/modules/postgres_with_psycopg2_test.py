@@ -74,6 +74,10 @@ else:
                 __salt__=SALT_STUB)
 @patch('salt.utils.which', Mock(return_value='/usr/bin/pgsql'))
 class PostgresTestCase(TestCase):
+
+    def test_psycopg_found(self):
+        self.assertTrue(postgres.HAS_PSYCOPG)
+
     def test_run_psql(self):
         postgres._run_psql('echo "hi"')
         cmd = SALT_STUB['cmd.run_all']
