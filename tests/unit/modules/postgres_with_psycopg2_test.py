@@ -71,20 +71,15 @@ else:
 @skipIf(NO_MOCK, NO_MOCK_REASON)
 @patch.multiple(postgres,
                 __grains__={'os_family': 'Linux'},
-                __salt__=SALT_STUB)
+                __salt__=SALT_STUB,
+                __context__={})
 @patch('salt.utils.which', Mock(return_value='/usr/bin/pgsql'))
 class PostgresTestCase(TestCase):
 
     def test_psycopg_found(self):
         self.assertTrue(postgres.HAS_PSYCOPG)
 
-    def test_run_psql(self):
-        postgres._run_psql('echo "hi"')
-        cmd = SALT_STUB['cmd.run_all']
-
-        self.assertEqual('postgres', cmd.call_args[1]['runas'])
-
-    @patch('salt.modules.postgres._run_psql',
+    @patch('salt.modules.postgres._psycopg_run_command',
            Mock(return_value={'retcode': 0}))
     def test_db_alter(self):
         postgres.db_alter('dbname',
@@ -96,19 +91,19 @@ class PostgresTestCase(TestCase):
                           tablespace='testspace',
                           owner='otheruser',
                           runas='foo')
-        postgres._run_psql.assert_has_calls([
-            call(['/usr/bin/pgsql', '--no-align', '--no-readline',
-                  '--no-password', '--username', 'testuser', '--host',
-                  'testhost', '--port', 'testport', '--dbname', 'maint_db',
-                  '-c', 'ALTER DATABASE "dbname" OWNER TO "otheruser"'],
-                 host='testhost', user='testuser',
-                 password='foo', runas='foo', port='testport'),
-            call(['/usr/bin/pgsql', '--no-align', '--no-readline',
-                  '--no-password', '--username', 'testuser', '--host',
-                  'testhost', '--port', 'testport', '--dbname', 'maint_db',
-                  '-c', 'ALTER DATABASE "dbname" SET TABLESPACE "testspace"'],
-                 host='testhost', user='testuser',
-                 password='foo', runas='foo', port='testport')
+        postgres._psycopg_run_command.assert_has_calls([
+            call('ALTER DATABASE "dbname" OWNER TO "otheruser"',
+                 db_name='maint_db',
+                 host='testhost',
+                 user='testuser',
+                 password='foo',
+                 port='testport'),
+            call('ALTER DATABASE "dbname" SET TABLESPACE "testspace"',
+                 db_name='maint_db',
+                 host='testhost',
+                 user='testuser',
+                 password='foo',
+                 port='testport')
         ])
 
     @patch('salt.modules.postgres.owner_to',

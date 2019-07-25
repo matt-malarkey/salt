@@ -264,7 +264,9 @@ def version(user=None, host=None, port=None, maintenance_db=None,
             'WHERE name = \'server_version\''
 
     if HAS_PSYCOPG:
-        return _psycopg_run_command(query, db_name=maintenance_db, host=host, port=port, user=user, password=password)
+        res = _psycopg_run_command(query, db_name=maintenance_db, host=host, port=port, user=user, password=password)
+        version_res = res['stdout'].split('\n')
+        return version_res[1]
 
     cmd = _psql_cmd('-c', query,
                     '-t',
@@ -323,6 +325,13 @@ def _connection_defaults(user=None, host=None, port=None, maintenance_db=None,
     if password is None:
         password = __salt__['config.option']('postgres.pass')
 
+    if HAS_PSYCOPG:
+        # Default the values for psycopg2 if not set by salt config
+        if not user:
+            user = 'postgres'
+        if not maintenance_db:
+            maintenance_db = 'postgres'
+
     return (user, host, port, maintenance_db, password)
 
 
@@ -364,6 +373,23 @@ def _psql_prepare_and_run(cmd,
                           password=None,
                           runas=None,
                           user=None):
+
+    if HAS_PSYCOPG:
+        print('Running command with psycopg2: %s', cmd)
+
+        # Run command
+        if cmd[0] == '-c':
+            return _psycopg_run_command(cmd[1],
+                                        host=host,
+                                        port=port,
+                                        db_name=maintenance_db,
+                                        password=password,
+                                        user=user)
+        # TODO(mdm): Run script
+        elif cmd[0] == '-f':
+            pass
+
+
     rcmd = _psql_cmd(
         host=host, user=user, port=port,
         maintenance_db=maintenance_db, password=password,
@@ -593,10 +619,14 @@ def db_alter(name, user=None, host=None, port=None, maintenance_db=None,
                 name, tablespace
             ))
         for query in queries:
-            ret = _psql_prepare_and_run(['-c', query],
-                                        user=user, host=host, port=port,
-                                        maintenance_db=maintenance_db,
-                                        password=password, runas=runas)
+            if HAS_PSYCOPG:
+                ret = _psycopg_run_command(query, user=user, host=host, port=port,
+                                           db_name=maintenance_db, password=password)
+            else:
+                ret = _psql_prepare_and_run(['-c', query],
+                                            user=user, host=host, port=port,
+                                            maintenance_db=maintenance_db,
+                                            password=password, runas=runas)
 
     if ret['retcode'] != 0:
         return False
@@ -3139,14 +3169,10 @@ def _psycopg_get_connection(db_name=None, host=None, port=None, user=None, passw
     # Create connection and store in context if not already there
     db_conn_key = _psycopg_get_db_conn_key(db_name=db_name, host=host, port=port, user=user)
 
-    # Check if run inside a state i.e. is context defined, can we persist connection
-    try:
-        if db_conn_key not in __context__:
-            conn = psycopg2.connect(dbname=db_name, user=user, password=password, host=host, port=port)
-            __context__[db_conn_key] = conn
-        return __context__[db_conn_key]
-    except NameError:
-        return psycopg2.connect(dbname=db_name, user=user, password=password, host=host, port=port)
+    if db_conn_key not in __context__:
+        conn = psycopg2.connect(dbname=db_name, user=user, password=password, host=host, port=port)
+        __context__[db_conn_key] = conn
+    return __context__[db_conn_key]
 
 
 def _psycopg_get_db_conn_key(db_name, host, port, user):
