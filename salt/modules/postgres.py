@@ -366,6 +366,26 @@ def _psql_cmd(*args, **kwargs):
     return cmd
 
 
+def _parse_psql_flags_for_cmd(cmd):
+    it = iter(cmd)
+    for x in it:
+        # Ignore flags
+        if x.startswith('--'):
+            continue
+
+        # Execute command, return the command
+        if x == '-c':
+            return next(it)
+
+        # Execute script, return the script file contents
+        elif x == '-f':
+            with salt.utils.fopen(next(it)) as f:
+                script_file_data = f.read()
+            return script_file_data
+
+    raise SaltInvocationError("No command or file was given to psql in {0}".format(cmd))
+
+
 def _psql_prepare_and_run(cmd,
                           host=None,
                           port=None,
@@ -375,20 +395,13 @@ def _psql_prepare_and_run(cmd,
                           user=None):
 
     if HAS_PSYCOPG:
-        print('Running command with psycopg2: %s', cmd)
-
-        # Run command
-        if cmd[0] == '-c':
-            return _psycopg_run_command(cmd[1],
-                                        host=host,
-                                        port=port,
-                                        db_name=maintenance_db,
-                                        password=password,
-                                        user=user)
-        # TODO(mdm): Run script
-        elif cmd[0] == '-f':
-            pass
-
+        cmd = _parse_psql_flags_for_cmd(cmd)
+        return _psycopg_run_command(cmd,
+                                    host=host,
+                                    port=port,
+                                    db_name=maintenance_db,
+                                    password=password,
+                                    user=user)
 
     rcmd = _psql_cmd(
         host=host, user=user, port=port,
