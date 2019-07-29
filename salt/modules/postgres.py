@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from __future__ import print_function
+
 '''
 Module to provide Postgres compatibility to salt.
 
@@ -144,6 +146,74 @@ def _find_pg_binary(util):
         return util_bin
 
 
+def run_command(cmd, dbname=None, host=None, port=None, user=None, password=None, runas=None):
+    """
+    Run a command on a postgres database, using psycopg2 if installed.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' postgres_ext.run_command 'create table foo()'
+
+    cmd
+        The single sql statement to run
+
+    dbname
+        The database that we run the script against
+
+    Other args are the same as the configuration
+
+    """
+
+    return _run(cmd, dbname=dbname, host=host, port=port, user=user, password=password, runas=runas)
+
+
+def run_script(source, saltenv='base', dbname=None, host=None, port=None, user=None, password=None, runas=None):
+    """
+    Run a script on a postgres database, using psycopg2 if installed.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' postgres_ext.run_script salt://script.sql
+
+    source
+        The script to run. Expects a salt URI at the moment
+
+    saltenv
+        The environment to look for the script in (defaults to base)
+
+    dbname
+        The database that we run the script against
+
+    Other args are the same as the configuration
+
+    """
+
+    script_file = __salt__['cp.cache_file'](source, saltenv=saltenv)
+    with salt.utils.fopen(script_file) as f:
+        script_file_data = f.read()
+
+    return _run(cmd=script_file_data, dbname=dbname, host=host, port=port, user=user, password=password, runas=runas)
+
+
+def _run(cmd, dbname=None, host=None, port=None, password=None, runas=None, user=None):
+    if HAS_PSYCOPG:
+        return _psycopg_run_command(cmd, db_name=dbname, host=host, port=port, user=user, password=password)
+
+    return _psql_prepare_and_run(
+        ['-c', cmd],
+        maintenance_db=dbname,
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        runas=runas,
+    )
+
+
 def _run_psql(cmd, runas=None, password=None, host=None, port=None, user=None):
     '''
     Helper function to call psql, because the password requirement
@@ -151,7 +221,7 @@ def _run_psql(cmd, runas=None, password=None, host=None, port=None, user=None):
     '''
     kwargs = {
         'reset_system_locale': False,
-        'clean_env': True,
+        'clean_env': True, # TODO(mdm): this is not in ours, check why
     }
     if runas is None:
         if not host:
@@ -184,6 +254,7 @@ def _run_psql(cmd, runas=None, password=None, host=None, port=None, user=None):
             __salt__['file.chown'](pgpassfile, runas, '')
             kwargs['env'] = {'PGPASSFILE': pgpassfile}
 
+    # ret = __salt__[run_cmd](cmd, stdin=stdin, **kwargs) # TODO(mdm): check if there's any difference (below, theirs)
     ret = __salt__['cmd.run_all'](cmd, python_shell=False, **kwargs)
 
     if ret.get('retcode', 0) != 0:
@@ -265,8 +336,7 @@ def version(user=None, host=None, port=None, maintenance_db=None,
 
     if HAS_PSYCOPG:
         res = _psycopg_run_command(query, db_name=maintenance_db, host=host, port=port, user=user, password=password)
-        version_res = res['stdout'].split('\n')
-        return version_res[1]
+        return res['stdout'].split('\n')[0]
 
     cmd = _psql_cmd('-c', query,
                     '-t',
@@ -335,6 +405,7 @@ def _connection_defaults(user=None, host=None, port=None, maintenance_db=None,
     return (user, host, port, maintenance_db, password)
 
 
+# TODO(mdm): add in args=['-v ON_ERROR_STOP=1'] and cmd += [pipes.quote(c) for c in args] instead of extend(args)? Then ' '.join(cmd)
 def _psql_cmd(*args, **kwargs):
     '''
     Return string with fully composed psql command.
@@ -347,7 +418,9 @@ def _psql_cmd(*args, **kwargs):
         kwargs.get('host'),
         kwargs.get('port'),
         kwargs.get('maintenance_db'),
-        kwargs.get('password'))
+        kwargs.get('password')
+    )
+
     _PSQL_BIN = _find_pg_binary('psql')
     cmd = [_PSQL_BIN,
            '--no-align',
@@ -408,7 +481,7 @@ def _psql_prepare_and_run(cmd,
         maintenance_db=maintenance_db, password=password,
         *cmd)
     cmdret = _run_psql(
-        rcmd, runas=runas, password=password, host=host, port=port, user=user)
+        rcmd, runas=runas, password=password, host=host, port=port, user=user) # TODO(mdm): we pass in stdin=stdin here, why?
     return cmdret
 
 
@@ -3185,6 +3258,7 @@ def _psycopg_get_connection(db_name=None, host=None, port=None, user=None, passw
     if db_conn_key not in __context__:
         conn = psycopg2.connect(dbname=db_name, user=user, password=password, host=host, port=port)
         __context__[db_conn_key] = conn
+
     return __context__[db_conn_key]
 
 
@@ -3214,6 +3288,12 @@ def _psycopg_run_command(cmd, db_name=None, host=None, port=None, user=None, pas
     conn = _psycopg_get_connection(db_name=db_name, host=host, port=port, user=user, password=password)
     conn.set_session(autocommit=True)
     cur = conn.cursor()
+
+    # Set the datestyle to this for all queries
+    cur.execute("SET DateStyle='ISO,MDY'")
+
+    # TODO(mdm): need to use this to execute COPY commands:
+    # cur.copy_exper('COPY .. TO STDOUT WITH CSV HEADER', sys.stdout)
 
     try:
         cur.execute(cmd)
