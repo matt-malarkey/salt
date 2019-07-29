@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-from __future__ import print_function
 
 '''
 Module to provide Postgres compatibility to salt.
@@ -34,14 +33,14 @@ Module to provide Postgres compatibility to salt.
 # pylint: disable=E8203
 
 # Import python libs
-from __future__ import absolute_import
 import datetime
 import distutils.version  # pylint: disable=import-error,no-name-in-module
-import logging
 import hashlib
+import io
+import logging
 import os
-import re
 import pipes
+import re
 import tempfile
 try:
     import csv
@@ -527,14 +526,20 @@ def psql_query(query, user=None, host=None, port=None, maintenance_db=None,
     csv_query = 'COPY ({0}) TO STDOUT WITH CSV HEADER'.format(
         query.strip().rstrip(';'))
 
-    # always use the same datestyle settings to allow parsing dates
-    # regardless what server settings are configured
-    cmdret = _psql_prepare_and_run(['-v', 'datestyle=ISO,MDY',
-                                    '-c', csv_query],
-                                   runas=runas,
-                                   host=host, user=user, port=port,
-                                   maintenance_db=maintenance_db,
-                                   password=password)
+    if HAS_PSYCOPG:
+        cmdret = _psycopg_run_copy(csv_query,
+                                   db_name=maintenance_db, host=host, port=port,
+                                   user=user, password=password)
+    else:
+        # always use the same datestyle settings to allow parsing dates
+        # regardless what server settings are configured
+        cmdret = _psql_prepare_and_run(['-v', 'datestyle=ISO,MDY',
+                                        '-c', csv_query],
+                                       runas=runas,
+                                       host=host, user=user, port=port,
+                                       maintenance_db=maintenance_db,
+                                       password=password)
+
     if cmdret['retcode'] > 0:
         return ret
 
@@ -3267,33 +3272,12 @@ def _psycopg_get_db_conn_key(db_name, host, port, user):
 
 
 def _psycopg_run_command(cmd, db_name=None, host=None, port=None, user=None, password=None):
-    """
-    Run a command on a postgres database using psycopg2.
-
-    CLI Example:
-
-    .. code-block:: bash
-
-        salt '*' postgres_ext.run_command 'create table foo()'
-
-    cmd
-        The single sql statement to run
-
-    db_name
-        The database that we run the script against
-
-    Other args are the same as the configuration
-    """
-
     conn = _psycopg_get_connection(db_name=db_name, host=host, port=port, user=user, password=password)
     conn.set_session(autocommit=True)
     cur = conn.cursor()
 
     # Set the datestyle to this for all queries
     cur.execute("SET DateStyle='ISO,MDY'")
-
-    # TODO(mdm): need to use this to execute COPY commands:
-    # cur.copy_exper('COPY .. TO STDOUT WITH CSV HEADER', sys.stdout)
 
     try:
         cur.execute(cmd)
@@ -3309,6 +3293,32 @@ def _psycopg_run_command(cmd, db_name=None, host=None, port=None, user=None, pas
 
     return {'retcode': success, 'stdout': res}
 
+
+def _psycopg_run_copy(cmd, db_name=None, host=None, port=None, user=None, password=None):
+    if re.match('COPY.+TO STDOUT WITH.+', cmd) is None:
+        log.error('Support for this COPY query is not implemented. See psycopg2 docs for how to.')
+        return {'retcode': -1}
+
+    conn = _psycopg_get_connection(db_name=db_name, host=host, port=port, user=user, password=password)
+    conn.set_session(autocommit=True)
+    cur = conn.cursor()
+
+    # Set the datestyle to this for all queries
+    cur.execute("SET DateStyle='ISO,MDY'")
+
+    # Create in memory file to copy results to
+    tmp_file = io.StringIO()
+    try:
+        cur.copy_expert(cmd, tmp_file)
+        success = 0
+    except psycopg2.Error as e:
+        log.error(str(e))
+        success = -1
+
+    res = tmp_file.getvalue()
+    tmp_file.close()
+
+    return {'retcode': success, 'stdout': res}
 
 def _psycopg_format_as_psql_output(rows):
     """
